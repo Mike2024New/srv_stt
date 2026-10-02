@@ -25,8 +25,6 @@ class Engine:
         self.whisper_speech_start_event = asyncio.Event()
         self.whisper_speech_end_event = asyncio.Event()
         self.is_speech = False
-        # self._whisper_silence_limit = 10
-        # self._whisper_silence_counter = 0
         self._start_time = None
 
     def is_running(self):
