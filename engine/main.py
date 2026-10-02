@@ -1,6 +1,5 @@
 import asyncio, numpy
 import threading
-
 from engine.audio_input_engine import Engine as AudioInputEngine
 from engine.stt_vosk_engine import Engine as SttVoskEngine
 from engine.stt_whisper_engine import Engine as SttWhisperEngine
@@ -12,19 +11,19 @@ from time import perf_counter
 
 class Engine:
     def __init__(self):
-        self._audio_engine = AudioInputEngine()
-        self._stt_vosk_engine = SttVoskEngine()
-        self._stt_whisper_engine = SttWhisperEngine()
-        self.queue = Queue()
         self._running = False
         self._parameters: Parameters | None = None
+        self._audio_engine: AudioInputEngine | None = None
+        self._stt_vosk_engine: SttVoskEngine | None = None
+        self._stt_whisper_engine: SttWhisperEngine | None = None
+        self.queue = Queue()  # основная очередь для потребителя (например для стриминга) сюда stt сложат результаты
         # буферы накопители для whisper
-        self._whisper_prebuffer = deque(maxlen=500)
+        self._whisper_prebuffer = deque(maxlen=250)
         self._whisper_buffer = deque(maxlen=1000)
         # переменные события, для управления отправкой текста на распознавание в whisper
         self.whisper_speech_start_event = asyncio.Event()
         self.whisper_speech_end_event = asyncio.Event()
-        self.is_speech = False
+        self.is_speech = False  # вспомогательный флаг для whisper
         self._start_time = None
 
     def is_running(self):
@@ -41,25 +40,30 @@ class Engine:
             print(f'Запуск движка (подождите)')
             self._running = True
             self._parameters = parameters
-            if self._parameters.whisper_model_enable:
-                self._stt_whisper_engine.start(parameters=self._parameters)
-            self._stt_vosk_engine.start(parameters=self._parameters)
+            self._audio_engine = AudioInputEngine()
+            self._stt_vosk_engine = SttVoskEngine()
+            # vosk модель инициализируется всегда (она как vad)
+            self._stt_vosk_engine.start(model='vosk-model-small-ru-0.22', samplerate=parameters.samplerate)
             self._audio_engine.start(
-                parameters=self._parameters,
+                samplerate=self._parameters.samplerate,
+                blocksize=self._parameters.blocksize,
                 callback=self.stt_callback,
             )
-
             print(f'Движок запущен')
+
+            # если опционально указана модель whisper на входе
+            if SttWhisperEngine.is_available_model(self._parameters.model):
+                self._stt_whisper_engine = SttWhisperEngine()
+                self._stt_whisper_engine.start(model=self._parameters.model, samplerate=parameters.samplerate)
 
     def stt_callback(self, indata, _frames, _time, _status):
         """Закидывает распознанные фразы в очередь"""
-
         pcm = indata[:, 0].copy()  # текущий входной чанк аудио
         self._whisper_prebuffer.append(pcm)  # положить его в ограниченный буфер (он пишет всё)
 
         if self._running:
             # обработка для whisper
-            if self._parameters.whisper_model_enable:
+            if self._stt_whisper_engine is not None:
                 if self.whisper_speech_start_event.is_set():  # начали речь
                     self.whisper_speech_start_event.clear()
                     self._whisper_buffer.extend(self._whisper_prebuffer)
@@ -98,12 +102,12 @@ class Engine:
             # результат от vosk
             if res.get('type') == 'result':
                 # если подключен whisper
-                if self._parameters.whisper_model_enable:
+                if self._stt_whisper_engine is not None:
                     self.is_speech = False
                     self.whisper_speech_end_event.set()
 
                 # если whisper подключен, то его результат будет отправлен
-                if not self._parameters.whisper_model_enable:
+                if self._stt_whisper_engine is None:
                     end_time = round(perf_counter() - self._start_time, 4)
                     res.update({'metric_sec': end_time})
                     self.queue.put(res)
@@ -111,7 +115,7 @@ class Engine:
             # начали говорить (первый partial - ориентир, и для whisper который захватывает часть предбуфера)
             if res.get('type') == 'partial':
                 # если подключен whisper
-                if self._parameters.whisper_model_enable:
+                if self._stt_whisper_engine is not None:
                     self.is_speech = True
                     self.whisper_speech_start_event.set()
                 self._start_time = perf_counter()
@@ -123,7 +127,8 @@ class Engine:
             self._running = False
             self._audio_engine.stop()
             self._stt_vosk_engine.stop()
-            self._stt_whisper_engine.stop()
+            if self._stt_whisper_engine is not None:
+                self._stt_whisper_engine.stop()
             self._parameters = None
             self.queue = Queue()
             print(f'Движок остановлен')
@@ -131,20 +136,15 @@ class Engine:
 
 async def main():
     engine = Engine()
-    engine_task = asyncio.create_task(
-        engine.start(
-            parameters=Parameters(
-                whisper_model_select='medium',  # выбор модели
-                whisper_model_enable=True,  # whisper можно отключить
-            )
-        )
-    )
+    engine_task = asyncio.create_task(engine.start(parameters=Parameters(model='small')))
 
     async def consumer():
         while engine.is_running():
             try:
                 res = engine.queue.get_nowait()
-                if res.get('type', None) == 'result':
+                if res.get('type', None) == 'partial':
+                    print(res)
+                elif res.get('type', None) == 'result':
                     print(res)
             except Empty:
                 await asyncio.sleep(0.05)

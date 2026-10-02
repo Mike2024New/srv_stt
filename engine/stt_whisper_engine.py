@@ -1,5 +1,5 @@
 import numpy as np
-from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel, available_models
 
 from config import settings, Parameters
 
@@ -8,7 +8,11 @@ class Engine:
     def __init__(self):
         self._model: WhisperModel | None = None
 
-    def start(self, parameters: Parameters):
+    @staticmethod
+    def is_available_model(model: str):
+        return model in available_models()
+
+    def start(self, model: str, samplerate: int):
         # карусель параметров, сверху вниз (можно будет расширить в перспективе)
         start_parameters = [
             {'device': 'cuda', 'compute_type': 'float16'},  # для видеокарт nvidia с драйвером cuda
@@ -16,15 +20,15 @@ class Engine:
         ]
         for dev in start_parameters:
             self._model = WhisperModel(
-                str(settings.whisper_models_dir_prop / parameters.whisper_model_select),
+                str(settings.models_dir_prop / model),
                 # download_root=str(settings.whisper_models_dir_prop),
                 local_files_only=True,  # запрет на скачивание моделей без ведома пользователя (политика оффлайн)
-                **dev,
+                **dev,  # device и compute_type
             )
             try:
                 # проверка модели на pcm фрагменте
-                self.process(pcm=np.zeros(16000 // 10, dtype=np.float32))
-                dev.update({'model': parameters.whisper_model_select})
+                self.process(pcm=np.zeros(samplerate // 10, dtype=np.float32))
+                dev.update({'model': model})
                 print(dev)
                 break
             except RuntimeError as err:  # noqa
@@ -51,5 +55,8 @@ class Engine:
 
 
 if __name__ == '__main__':
-    eng = Engine()
-    eng.start(parameters=Parameters(whisper_model_select='medium'))
+    params = Parameters(model='medium')
+    # проверка что модель разрешенная
+    if Engine.is_available_model(model=params.model):
+        eng = Engine()
+        eng.start(model='small', samplerate=16000)

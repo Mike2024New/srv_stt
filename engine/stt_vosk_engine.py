@@ -1,7 +1,7 @@
 import json
 from vosk import Model, KaldiRecognizer
 from infrastructure_other import ShutUpLogs
-from config import Parameters, settings
+from config import settings
 
 
 class Engine:
@@ -10,10 +10,15 @@ class Engine:
         self._recognizer = None
         self._shut_up = ShutUpLogs()
 
-    def start(self, parameters: Parameters):
-        self._shut_up.enable()
-        self._model = Model(str(settings.vosk_models_dir_prop / parameters.model))
-        self._recognizer = KaldiRecognizer(self._model, parameters.samplerate)
+    def start(self, model: str, samplerate: int):
+        self._shut_up.enable()  # успокоить логи vosk
+
+        # vosk в этом проекте грузится всегда даже если он не используется как stt(он нужен как vad)
+        if not (settings.models_dir_prop / model).exists():
+            raise RuntimeError(f'Отсутствует дефолтная модель `{model}`')
+
+        self._model = Model(str(settings.models_dir_prop / model))
+        self._recognizer = KaldiRecognizer(self._model, samplerate)
         self._shut_up.disable()
 
     def recognized(self, chunk):

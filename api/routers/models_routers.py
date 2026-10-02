@@ -10,10 +10,7 @@ def routers_factory(engine: Engine) -> APIRouter:
     @router.get('/')
     async def available_models_list():
         """Получить список доступных моделей"""
-        models_list = []
-        for file in settings.models_dir_prop.iterdir():
-            for model in file.iterdir():
-                models_list.append(model.name)
+        models_list = [file.name for file in settings.models_dir_prop.iterdir()]
         return {'models_list': models_list}
 
     return router

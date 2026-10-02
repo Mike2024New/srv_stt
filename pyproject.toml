@@ -1,6 +1,6 @@
 [project]
 name = "srv-stt-whisper"
-version = "0.2.0"
+version = "0.3.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,12 +11,9 @@ dependencies = [
     "infrastructure-builder @ git+https://github.com/Mike2024New/infrastructure2.git@main#subdirectory=packages/infrastructure_builder",
     "infrastructure-http-clients @ git+https://github.com/Mike2024New/infrastructure2.git@main#subdirectory=packages/infrastructure_http_clients",
     "infrastructure-cli-utils @ git+https://github.com/Mike2024New/infrastructure2.git@main#subdirectory=packages/infrastructure_cli_utils",
-    "aec-audio-processing==1.0.1",
     "faster-whisper==1.2.1",
     "vosk==0.3.45",
     "websockets==17.1",
     "sounddevice==0.5.6",
     "numpy==2.5.3",
-    "pyaudiowpatch==0.2.12.8",
-    "soxr==1.1.0",
 ]
