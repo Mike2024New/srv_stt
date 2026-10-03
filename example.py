@@ -21,8 +21,7 @@ async def run_server() -> subprocess.Popen:
     # 3. Запуск engine, с переданными параметрами модели
     async with aiohttp.ClientSession() as session:
         parameters = {
-            'samplerate': 16000, 'blocksize': 1024, 'model': 'vosk-model-small-ru-0.22',
-            'whisper_model_enable': True, 'whisper_model_select': 'small',  # подключение whisper
+            'samplerate': 16000, 'blocksize': 1024, 'model': 'small',  # прямо здесь можно указывать whisper
         }
         print(f'Запуск engine сервера')
         async with session.post(url=f'http://127.0.0.1:{port}/start/', json=parameters) as resp:

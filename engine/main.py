@@ -1,5 +1,4 @@
-import asyncio, numpy
-import threading
+import uuid, asyncio, numpy, threading
 from engine.audio_input_engine import Engine as AudioInputEngine
 from engine.stt_vosk_engine import Engine as SttVoskEngine
 from engine.stt_whisper_engine import Engine as SttWhisperEngine
@@ -18,12 +17,13 @@ class Engine:
         self._stt_whisper_engine: SttWhisperEngine | None = None
         self.queue = Queue()  # основная очередь для потребителя (например для стриминга) сюда stt сложат результаты
         # буферы накопители для whisper
-        self._whisper_prebuffer = deque(maxlen=250)
+        self._whisper_prebuffer = deque(maxlen=200)
         self._whisper_buffer = deque(maxlen=1000)
         # переменные события, для управления отправкой текста на распознавание в whisper
         self.whisper_speech_start_event = asyncio.Event()
         self.whisper_speech_end_event = asyncio.Event()
         self.is_speech = False  # вспомогательный флаг для whisper
+        self._speech_request_id = None
         self._start_time = None
 
     def is_running(self):
@@ -59,7 +59,8 @@ class Engine:
     def stt_callback(self, indata, _frames, _time, _status):
         """Закидывает распознанные фразы в очередь"""
         pcm = indata[:, 0].copy()  # текущий входной чанк аудио
-        self._whisper_prebuffer.append(pcm)  # положить его в ограниченный буфер (он пишет всё)
+        if not self.is_speech:  # если сейчас не идет речь (иными словами запись пошла уже в речевой буфер)
+            self._whisper_prebuffer.append(pcm)  # положить его в ограниченный буфер (он пишет всё)
 
         if self._running:
             # обработка для whisper
@@ -85,7 +86,9 @@ class Engine:
                                     {
                                         'type': 'result',
                                         'text': result, 'engine': 'whisper',
-                                        'metric_sec': round(perf_counter() - self._start_time, 4)
+                                        'metric_sec': round(perf_counter() - self._start_time, 4),
+                                        'request_id': self._speech_request_id,
+
                                     }
                                 )
 
@@ -101,24 +104,21 @@ class Engine:
             res = self._stt_vosk_engine.recognized(chunk=chunk_bytes)
             # результат от vosk
             if res.get('type') == 'result':
-                # если подключен whisper
-                if self._stt_whisper_engine is not None:
-                    self.is_speech = False
-                    self.whisper_speech_end_event.set()
+                self.is_speech = False
+                self.whisper_speech_end_event.set()
 
-                # если whisper подключен, то его результат будет отправлен
-                if self._stt_whisper_engine is None:
-                    end_time = round(perf_counter() - self._start_time, 4)
-                    res.update({'metric_sec': end_time})
-                    self.queue.put(res)
+                end_time = round(perf_counter() - self._start_time, 4)
+                res.update({'metric_sec': end_time, 'request_id': self._speech_request_id})
+                self.queue.put(res)
 
             # начали говорить (первый partial - ориентир, и для whisper который захватывает часть предбуфера)
             if res.get('type') == 'partial':
-                # если подключен whisper
-                if self._stt_whisper_engine is not None:
+                if not self.is_speech:
                     self.is_speech = True
                     self.whisper_speech_start_event.set()
-                self._start_time = perf_counter()
+                    self._speech_request_id = str(uuid.uuid4())[:8]
+                    self._start_time = perf_counter()
+                res.update({'request_id': self._speech_request_id})
                 self.queue.put(res)
 
     async def stop(self):
@@ -142,10 +142,10 @@ async def main():
         while engine.is_running():
             try:
                 res = engine.queue.get_nowait()
-                if res.get('type', None) == 'partial':
+                if res.get('type', None) == 'result':
                     print(res)
-                elif res.get('type', None) == 'result':
-                    print(res)
+                # elif res.get('type', None) == 'partial':
+                #     print(res)
             except Empty:
                 await asyncio.sleep(0.05)
 
