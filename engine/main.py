@@ -1,4 +1,5 @@
 import queue
+import time
 import uuid, asyncio, numpy, threading
 from engine.audio_input_engine import Engine as AudioInputEngine
 from engine.stt_vosk_engine import Engine as SttVoskEngine
@@ -26,6 +27,8 @@ class Engine:
         self.is_speech = False  # вспомогательный флаг для whisper
         self._speech_request_id = None
         self._start_time = None
+        self._engines_count = 0
+        self._engines_list = []
 
     def is_running(self):
         """Статус движка, запущен ли?"""
@@ -45,6 +48,7 @@ class Engine:
             self._stt_vosk_engine = SttVoskEngine()
             # vosk модель инициализируется всегда (она как vad)
             self._stt_vosk_engine.start(model='vosk-model-small-ru-0.22', samplerate=parameters.samplerate)
+            self._engines_list.append('vosk')
             self._audio_engine.start(samplerate=self._parameters.samplerate, blocksize=self._parameters.blocksize)
             print(f'Движок запущен')
 
@@ -52,7 +56,13 @@ class Engine:
             if SttWhisperEngine.is_available_model(self._parameters.model):
                 self._stt_whisper_engine = SttWhisperEngine()
                 self._stt_whisper_engine.start(model=self._parameters.model, samplerate=parameters.samplerate)
+                self._engines_list.append('whisper')
 
+            # сообщить клиенту о количестве движков (сколько распознанных фраз ему ждать)
+            self.queue.put(
+                {'type': 'metadata', 'engines': self._engines_list},
+                block=False
+            )
             # запуск воркера
             threading.Thread(target=lambda: self.stt_worker(), daemon=True).start()
 
@@ -96,7 +106,6 @@ class Engine:
                                             'text': result, 'engine': 'whisper',
                                             'metric_sec': round(perf_counter() - self._start_time, 4),
                                             'request_id': self._speech_request_id,
-
                                         }
                                     )
 
@@ -116,7 +125,10 @@ class Engine:
                     self.whisper_speech_end_event.set()
 
                     end_time = round(perf_counter() - self._start_time, 4)
-                    res.update({'metric_sec': end_time, 'request_id': self._speech_request_id})
+                    res.update({
+                        'metric_sec': end_time,
+                        'request_id': self._speech_request_id,
+                    })
                     self.queue.put(res)
 
                 # начали говорить (первый partial - ориентир, и для whisper который захватывает часть предбуфера)
@@ -147,15 +159,53 @@ async def main():
     engine_task = asyncio.create_task(engine.start(parameters=Parameters(model='small')))
 
     async def consumer():
+        results = {}  # request_id -> {'data': dict, 'timestamp': float}
+        engines = []  # список движков, например ['vosk', 'whisper']
+        timeout_sec = 1.0  # сколько ждать, если движок не ответил
+
         while engine.is_running():
             try:
                 res = engine.queue.get_nowait()
-                if res.get('type', None) == 'result':
-                    print(res)
-                # elif res.get('type', None) == 'partial':
-                #     print(res)
+
+                # метаданные — список движков
+                if res.get('type') == 'metadata':
+                    engines = res.get('engines', [])
+
+                # результат от движка
+                elif res.get('type') == 'result':
+                    req_id = res.get('request_id')
+                    engine_name = res.get('engine')
+                    text = res.get('text', '')
+
+                    if req_id not in results:
+                        results[req_id] = {
+                            'data': {},
+                            'timestamp': time.time(),
+                        }
+
+                    results[req_id]['data'][engine_name] = text
+
             except Empty:
-                await asyncio.sleep(0.05)
+                pass
+
+            # проверка таймаутов и готовности
+            now = time.time()
+            for req_id in list(results.keys()):
+                entry = results[req_id]
+                ready = len(entry['data']) >= len(engines)
+                timed_out = (now - entry['timestamp']) > timeout_sec
+
+                if ready or timed_out:
+                    # если таймаут — дополняем отсутствующие движки пустой строкой
+                    if timed_out and not ready:
+                        for eng in engines:
+                            if eng not in entry['data']:
+                                entry['data'][eng] = ''
+
+                    print(entry['data'])  # обработка результата (например передача в llm)
+                    del results[req_id]
+
+            await asyncio.sleep(0.05)
 
     consumer_task = asyncio.create_task(consumer())
     await asyncio.to_thread(lambda: input('... press enter for exit ...\n'))
