@@ -1,6 +1,6 @@
 [project]
 name = "srv-stt-whisper"
-version = "0.7.0"
+version = "0.8.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -21,7 +21,6 @@ dependencies = [
     "loguru>=0.7.3",
 ]
 
-# для тестов
 [tool.pytest.ini_options]
 testpaths = [
     "tests",

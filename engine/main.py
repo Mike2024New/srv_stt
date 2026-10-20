@@ -49,17 +49,22 @@ class Engine:
             self._parameters = parameters
             self._audio_engine = AudioInputEngine()
             self._stt_vosk_engine = SttVoskEngine()
-            # vosk модель инициализируется всегда (она как vad)
-            self._stt_vosk_engine.start(model='vosk-model-small-ru-0.22', samplerate=parameters.samplerate)
-            self._engines_list.append('vosk')
-            self._audio_engine.start(samplerate=self._parameters.samplerate, blocksize=self._parameters.blocksize)
-            logger.info(f'engine запущен')
+            try:
+                # vosk модель инициализируется всегда (она как vad)
+                self._stt_vosk_engine.start(model='vosk-model-small-ru-0.22', samplerate=parameters.samplerate)
+                self._engines_list.append('vosk')
+                self._audio_engine.start(samplerate=self._parameters.samplerate, blocksize=self._parameters.blocksize)
+            except Exception as err:
+                logger.exception(f"Ошибка при запуске engine, не удаётся запустить vosk: {err}")
 
             # если опционально указана модель whisper на входе
             if SttWhisperEngine.is_available_model(self._parameters.model):
-                self._stt_whisper_engine = SttWhisperEngine()
-                self._stt_whisper_engine.start(model=self._parameters.model, samplerate=parameters.samplerate)
-                self._engines_list.append('whisper')
+                try:
+                    self._stt_whisper_engine = SttWhisperEngine()
+                    self._stt_whisper_engine.start(model=self._parameters.model, samplerate=parameters.samplerate)
+                    self._engines_list.append('whisper')
+                except Exception as err:
+                    logger.exception(f"Ошибка при запуске engine, не удаётся запустить whisper: {err}")
 
             # сообщить клиенту о количестве движков (сколько распознанных фраз ему ждать)
             self.queue.put(
@@ -68,6 +73,7 @@ class Engine:
             )
             # запуск воркера
             threading.Thread(target=lambda: self.stt_worker(), daemon=True).start()
+            logger.info(f'engine запущен')
 
     def stt_worker(self):
         """Закидывает распознанные фразы в очередь"""
@@ -101,16 +107,19 @@ class Engine:
                             ))
 
                             def stt_whisper_worker():
-                                result = self._stt_whisper_engine.process(pcm=_result_buffer)
-                                if result:
-                                    self.queue.put(
-                                        {
-                                            'type': 'result',
-                                            'text': result, 'engine': 'whisper',
-                                            'metric_sec': round(perf_counter() - self._start_time, 4),
-                                            'request_id': self._speech_request_id,
-                                        }
-                                    )
+                                try:
+                                    result = self._stt_whisper_engine.process(pcm=_result_buffer)
+                                    if result:
+                                        self.queue.put(
+                                            {
+                                                'type': 'result',
+                                                'text': result, 'engine': 'whisper',
+                                                'metric_sec': round(perf_counter() - self._start_time, 4),
+                                                'request_id': self._speech_request_id,
+                                            }
+                                        )
+                                except Exception as e:
+                                    logger.exception(f'Ошибка при распознавании речи whisper: {e}')
 
                             threading.Thread(target=lambda: stt_whisper_worker()).start()
 
@@ -121,7 +130,11 @@ class Engine:
                 # обработка для vosk
                 indata_int16 = (indata * 32768).astype(numpy.int16)
                 chunk_bytes = indata_int16.tobytes()
-                res = self._stt_vosk_engine.recognized(chunk=chunk_bytes)
+                try:
+                    res = self._stt_vosk_engine.recognized(chunk=chunk_bytes)
+                except Exception as err:
+                    logger.exception(f'Ошибка при распознавании речи vosk: {err}')
+                    continue
                 # результат от vosk
                 if res.get('type') == 'result':
                     self.is_speech = False
@@ -148,10 +161,19 @@ class Engine:
         if self._running:
             logger.info(f'Остановка engine')
             self._running = False
-            self._audio_engine.stop()  # sentinel для воркера
-            self._stt_vosk_engine.stop()
+            try:
+                self._audio_engine.stop()  # sentinel для воркера
+            except Exception as err:
+                logger.exception(f'Ошибка при остановке audio_input: {err}')
+            try:
+                self._stt_vosk_engine.stop()
+            except Exception as err:
+                logger.exception(f'Ошибка при остановке engine vosk: {err}')
             if self._stt_whisper_engine is not None:
-                self._stt_whisper_engine.stop()
+                try:
+                    self._stt_whisper_engine.stop()
+                except Exception as err:
+                    logger.exception(f'Ошибка при остановке engine whisper: {err}')
             self._parameters = None
             self.queue = Queue()
             logger.info(f'engine остановлен')
