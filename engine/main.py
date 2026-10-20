@@ -8,6 +8,7 @@ from config.schemas import Parameters
 from queue import Queue, Empty
 from collections import deque
 from time import perf_counter
+from config import logger
 
 
 class Engine:
@@ -38,10 +39,12 @@ class Engine:
         """Получить текущие параметры"""
         return self._parameters
 
-    async def start(self, parameters: Parameters):
+    async def start(self, parameters: Parameters, request_id: str):
         """Запуск микрофона с распознавателем речи"""
         if not self._running:
-            print(f'Запуск движка (подождите)')
+            logger.set_logger(request_id=request_id)
+            logger.info(f'Запуск engine')
+            logger.debug(parameters.model_dump())  # логирование параметров запуска
             self._running = True
             self._parameters = parameters
             self._audio_engine = AudioInputEngine()
@@ -50,7 +53,7 @@ class Engine:
             self._stt_vosk_engine.start(model='vosk-model-small-ru-0.22', samplerate=parameters.samplerate)
             self._engines_list.append('vosk')
             self._audio_engine.start(samplerate=self._parameters.samplerate, blocksize=self._parameters.blocksize)
-            print(f'Движок запущен')
+            logger.info(f'engine запущен')
 
             # если опционально указана модель whisper на входе
             if SttWhisperEngine.is_available_model(self._parameters.model):
@@ -143,7 +146,7 @@ class Engine:
 
     async def stop(self):
         if self._running:
-            print(f'Остановка движка (подождите)')
+            logger.info(f'Остановка engine')
             self._running = False
             self._audio_engine.stop()  # sentinel для воркера
             self._stt_vosk_engine.stop()
@@ -151,12 +154,12 @@ class Engine:
                 self._stt_whisper_engine.stop()
             self._parameters = None
             self.queue = Queue()
-            print(f'Движок остановлен')
+            logger.info(f'engine остановлен')
 
 
 async def main():
     engine = Engine()
-    engine_task = asyncio.create_task(engine.start(parameters=Parameters(model='small')))
+    engine_task = asyncio.create_task(engine.start(parameters=Parameters(model='small'), request_id='#001'))
 
     async def consumer():
         results = {}  # request_id -> {'data': dict, 'timestamp': float}

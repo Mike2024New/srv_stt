@@ -18,9 +18,12 @@ def routers_factory(engine: Engine) -> APIRouter:
         }
 
     @router.post('/start/')
-    async def start(input_parameters: Parameters):
-        """Запуск движка с передачей параметров"""
-        await engine.start(parameters=input_parameters)
+    async def start(input_parameters: Parameters, request_id: str | None = None):
+        """
+        Запуск движка с передачей параметров
+        reuqest_id - передача id для сквозного логирования
+        """
+        await engine.start(parameters=input_parameters, request_id=request_id)
         return {'result': 'Engine запущен'}
 
     @router.get('/stop/')

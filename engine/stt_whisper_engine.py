@@ -55,6 +55,7 @@ class Engine:
 
 
 if __name__ == '__main__':
+    print(available_models())
     params = Parameters(model='medium')
     # проверка что модель разрешенная
     if Engine.is_available_model(model=params.model):

@@ -1,19 +1,37 @@
 [project]
 name = "srv-stt-whisper"
-version = "0.6.0"
+version = "0.7.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "infrastructure-path-utils @ git+https://github.com/Mike2024New/infrastructure2.git@main#subdirectory=packages/infrastructure_path_utils",
+    "infrastructure-process-utils @ git+https://github.com/Mike2024New/infrastructure2.git@main#subdirectory=packages/infrastructure_process_utils",
     "infrastructure-settings-manager @ git+https://github.com/Mike2024New/infrastructure2.git@main#subdirectory=packages/infrastructure_settings_manager",
     "infrastructure-server @ git+https://github.com/Mike2024New/infrastructure2.git@main#subdirectory=packages/infrastructure_server",
     "infrastructure-builder @ git+https://github.com/Mike2024New/infrastructure2.git@main#subdirectory=packages/infrastructure_builder",
     "infrastructure-http-clients @ git+https://github.com/Mike2024New/infrastructure2.git@main#subdirectory=packages/infrastructure_http_clients",
     "infrastructure-cli-utils @ git+https://github.com/Mike2024New/infrastructure2.git@main#subdirectory=packages/infrastructure_cli_utils",
+    "infrastructure-log-utils @ git+https://github.com/Mike2024New/infrastructure2.git@main#subdirectory=packages/infrastructure_log_utils",
     "faster-whisper==1.2.1",
     "vosk==0.3.45",
     "websockets==17.1",
     "sounddevice==0.5.6",
     "numpy==2.5.3",
+    "loguru>=0.7.3",
+]
+
+# для тестов
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+]
+asyncio_mode = "auto"
+pythonpath = [
+    ".",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.4.0",
 ]
