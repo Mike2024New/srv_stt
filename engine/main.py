@@ -1,5 +1,4 @@
 import queue
-import time
 import uuid, asyncio, numpy, threading
 from engine.audio_input_engine import Engine as AudioInputEngine
 from engine.stt_vosk_engine import Engine as SttVoskEngine
@@ -180,55 +179,88 @@ class Engine:
 
 
 async def main():
+    # vosk гарантированно всегда приходит первым
     engine = Engine()
-    engine_task = asyncio.create_task(engine.start(parameters=Parameters(model='small'), request_id='#001'))
+    engine_task = asyncio.create_task(
+        engine.start(parameters=Parameters(model='small'), request_id='#001'))
 
     async def consumer():
-        results = {}  # request_id -> {'data': dict, 'timestamp': float}
-        engines = []  # список движков, например ['vosk', 'whisper']
-        timeout_sec = 1.0  # сколько ждать, если движок не ответил
+        # Настройки
+        whisper_timeout_sec = 2.0
+        # удобно с точки зрения фильтрации ключевых слов в начале распознанного текста
+        priority_words = ('джарвис', 'компьютер', 'ви', 'шарик')
+
+        # Состояние текущей фразы
+        current_request_id = None
+        current_answers = []
+        vosk_received_at = None  # время получения ответа от Vosk
+
+        def reset_state():
+            """Сброс состояния после обработки фразы."""
+            nonlocal current_request_id, current_answers, vosk_received_at
+            current_request_id = None
+            current_answers = []
+            vosk_received_at = None
+
+        def process_final_answers(answers: list):
+            """Единая точка отправки ответа в пайплайн (LLM/TTS)."""
+            print(answers)  # TODO: заменить на вызов пайплайна
+
+        def is_priority_command(text_in: str) -> bool:
+            """Проверяет, начинается ли фраза с кодового слова."""
+            for i in priority_words:
+                first_word = text_in.split()[0].lower() if text_in else ''
+                if first_word.lower() == i.lower():
+                    return True
+            return False
 
         while engine.is_running():
             try:
                 res = engine.queue.get_nowait()
-
-                # метаданные — список движков
-                if res.get('type') == 'metadata':
-                    engines = res.get('engines', [])
-
-                # результат от движка
-                elif res.get('type') == 'result':
-                    req_id = res.get('request_id')
-                    engine_name = res.get('engine')
-                    text = res.get('text', '')
-
-                    if req_id not in results:
-                        results[req_id] = {
-                            'data': {},
-                            'timestamp': time.time(),
-                        }
-
-                    results[req_id]['data'][engine_name] = text
-
             except Empty:
-                pass
+                res = None
 
-            # проверка таймаутов и готовности
-            now = time.time()
-            for req_id in list(results.keys()):
-                entry = results[req_id]
-                ready = len(entry['data']) >= len(engines)
-                timed_out = (now - entry['timestamp']) > timeout_sec
+            if res is not None:
+                msg_type = res.get('type')
 
-                if ready or timed_out:
-                    # если таймаут — дополняем отсутствующие движки пустой строкой
-                    if timed_out and not ready:
-                        for eng in engines:
-                            if eng not in entry['data']:
-                                entry['data'][eng] = ''
+                if msg_type == 'metadata':
+                    if 'whisper' not in res.get('engines') and whisper_timeout_sec != 0:
+                        # whisper отсутствует в движках, ждать нет смысла, занулить таймаут
+                        whisper_timeout_sec = 0
+                        logger.info("Whisper не обнаружен, таймаут whisper_timeout_sec отключен")
 
-                    print(entry['data'])  # обработка результата (например передача в llm)
-                    del results[req_id]
+                # здесь можно обработать начало речи
+                elif msg_type == 'partial':
+                    pass
+
+                elif msg_type == 'result':
+                    engine_name = res.get('engine')
+                    request_id = res.get('request_id')
+
+                    # --- Vosk ---
+                    if engine_name == 'vosk':
+                        current_request_id = request_id
+                        vosk_received_at = perf_counter()
+                        current_answers = [res]
+
+                        if is_priority_command(res.get('text', '')):
+                            # Команда: обрабатывать сразу, Whisper не ждать
+                            process_final_answers(current_answers)
+                            reset_state()
+
+                    # --- Whisper ---
+                    elif engine_name == 'whisper':
+                        # Принять только ответ на текущую фразу
+                        if request_id == current_request_id:
+                            current_answers.append(res)
+                            process_final_answers(current_answers)
+                            reset_state()
+
+            # --- Таймаут Whisper ---
+            if vosk_received_at is not None and (perf_counter() - vosk_received_at) > whisper_timeout_sec:
+                if current_answers:
+                    process_final_answers(current_answers)
+                reset_state()
 
             await asyncio.sleep(0.05)
 

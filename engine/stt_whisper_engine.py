@@ -1,7 +1,7 @@
 import numpy as np
 from faster_whisper import WhisperModel, available_models
 
-from config import settings, Parameters
+from config import settings, logger
 
 
 class Engine:
@@ -29,7 +29,7 @@ class Engine:
                 # проверка модели на pcm фрагменте
                 self.process(pcm=np.zeros(samplerate // 10, dtype=np.float32))
                 dev.update({'model': model})
-                print(dev)
+                logger.debug(f'Включен stt whisper {dev}')
                 break
             except RuntimeError as err:  # noqa
                 # print(f'Не удалось загрузиться на {dev} -> {err}')
@@ -41,9 +41,11 @@ class Engine:
     def process(self, pcm: np.ndarray):
         segments, _ = self._model.transcribe(
             pcm,
-            # # встроенный vad, нужно будет поиграться
-            # vad_filter=True,
-            # vad_parameters={},
+            language='ru',  # предпочитаемый язык
+            vad_filter=True,  # встроенный vad, дополнительная чистка от лишнего шума и тишины
+            vad_parameters={
+                'min_silence_duration_ms': 500
+            },  # конфигурирование vad, потом вынести в конфиг
         )
         full_text = " ".join(segment.text for segment in segments)
         return full_text.strip()
@@ -56,8 +58,3 @@ class Engine:
 
 if __name__ == '__main__':
     print(available_models())
-    params = Parameters(model='medium')
-    # проверка что модель разрешенная
-    if Engine.is_available_model(model=params.model):
-        eng = Engine()
-        eng.start(model='small', samplerate=16000)
