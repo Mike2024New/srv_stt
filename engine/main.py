@@ -118,7 +118,7 @@ class Engine:
                                             }
                                         )
                                 except Exception as e:
-                                    logger.exception(f'Ошибка при распознавании речи whisper: {e}')
+                                    logger.error(f'Ошибка при распознавании речи whisper: {e}')
 
                             threading.Thread(target=lambda: stt_whisper_worker()).start()
 
@@ -182,7 +182,7 @@ async def main():
     # vosk гарантированно всегда приходит первым
     engine = Engine()
     engine_task = asyncio.create_task(
-        engine.start(parameters=Parameters(model='small'), request_id='#001'))
+        engine.start(parameters=Parameters(model='tiny'), request_id='#001'))
 
     async def consumer():
         # Настройки

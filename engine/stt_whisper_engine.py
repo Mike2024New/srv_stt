@@ -10,6 +10,7 @@ class Engine:
         self._model_name: str | None = None
         self._samplerate: int | None = None
         self._device_parameters: dict | None = None
+        self._reload_model = False
 
     @staticmethod
     def is_available_model(model: str):
@@ -24,11 +25,15 @@ class Engine:
             {'device': 'cpu', 'compute_type': 'int8'},  # прочее, работа на cpu процессоре
         ]
         for dev in start_parameters:
-            self._model = WhisperModel(
-                str(settings.models_dir_prop / model),
-                local_files_only=True,  # запрет на скачивание моделей без ведома пользователя (политика оффлайн)
-                **dev,  # device и compute_type
-            )
+            try:
+                self._model = WhisperModel(
+                    str(settings.models_dir_prop / model),
+                    local_files_only=True,  # запрет на скачивание моделей без ведома пользователя (политика оффлайн)
+                    **dev,  # device и compute_type
+                )
+            except Exception as err:
+                logger.error(f'Не удалось загрузить модель: {err}')
+                return
             try:
                 # проверка модели на pcm фрагменте
                 self._device_parameters = dev
@@ -50,12 +55,16 @@ class Engine:
             logger.error('Модель не была реинициализированна, так как пустой model_name')
             raise RuntimeError('Модель не была реинициализированна, так как пустой model_name')
         self._device_parameters = {'device': 'cpu', 'compute_type': 'int8'}
-        logger.error(f'Реинициализация модели на cpu')
-        self._model = WhisperModel(
-            str(settings.models_dir_prop / self._model_name),
-            local_files_only=True,  # запрет на скачивание моделей без ведома пользователя (политика оффлайн)
-            **self._device_parameters,
-        )
+        logger.info(f'Реинициализация модели на cpu')
+        try:
+            self._model = WhisperModel(
+                str(settings.models_dir_prop / self._model_name),
+                local_files_only=True,  # запрет на скачивание моделей без ведома пользователя (политика оффлайн)
+                **self._device_parameters,
+            )
+        except Exception as err:
+            logger.error(f'Не удалось перезагрузить модель: {err}')
+            return
 
     def _transcribe(self, pcm: np.ndarray):
         segments, _ = self._model.transcribe(
@@ -72,13 +81,16 @@ class Engine:
     def process(self, pcm: np.ndarray):
         try:
             return self._transcribe(pcm=pcm)
-        except Exception as err:
+        except Exception as err:  # noqa
+            if self._reload_model:
+                return ''
             logger.error(f'Ошибка транскрибации, попытка реинициализировать модель, текст ошибки: {err}')
             self._reset_model()  # попытка перезагрузить модель
+            self._reload_model = True
             try:
                 return self._transcribe(pcm=pcm)
             except Exception as err2:
-                logger.exception(f'Повторная ошибка транскрибации, реинициализация на CPU не помогла: {err2}')
+                logger.error(f'Повторная ошибка транскрибации, реинициализация на CPU не помогла: {err2}')
                 raise
 
     def stop(self):
