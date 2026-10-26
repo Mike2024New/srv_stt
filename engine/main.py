@@ -182,7 +182,7 @@ async def main():
     # vosk гарантированно всегда приходит первым
     engine = Engine()
     engine_task = asyncio.create_task(
-        engine.start(parameters=Parameters(model='tiny'), request_id='#001'))
+        engine.start(parameters=Parameters(model='large-v3'), request_id='#001'))
 
     async def consumer():
         # Настройки
